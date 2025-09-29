@@ -1,104 +1,134 @@
-from flask import Flask, render_template, request, jsonify
-from num2words import num2words
-from text2digits import text2digits
-import base64
-import re
+"""Flask application exposing the HW4 county_data endpoint.
+
+This file was drafted with assistance from GPT-4o (Harvard Sandbox) and
+reviewed/modified manually to comply with the assignment specification.
+"""
+
+from __future__ import annotations
+
+import os
+import sqlite3
+from pathlib import Path
+from typing import Dict, Iterable, Tuple
+
+from flask import Flask, jsonify, request
+
+
+ALLOWED_MEASURE_NAMES = {
+    "Violent crime rate",
+    "Unemployment",
+    "Children in poverty",
+    "Diabetic screening",
+    "Mammography screening",
+    "Preventable hospital stays",
+    "Uninsured",
+    "Sexually transmitted infections",
+    "Physical inactivity",
+    "Adult obesity",
+    "Premature Death",
+    "Daily fine particulate matter",
+}
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_DATABASE = BASE_DIR / "data.db"
+
+DATABASE_PATH = Path(os.environ.get("DATABASE_PATH", DEFAULT_DATABASE))
+
+
+def get_db_connection() -> sqlite3.Connection:
+    if not DATABASE_PATH.exists():
+        raise FileNotFoundError(
+            f"SQLite database not found at {DATABASE_PATH}. Did you run csv_to_sqlite.py?"
+        )
+    connection = sqlite3.connect(DATABASE_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
+
 
 app = Flask(__name__)
 
-def text_to_number(text):
-    """Convert English text number to integer"""
-    # Remove any non-alphanumeric characters and convert to lowercase
-    text = re.sub(r'[^a-zA-Z\s-]', '', text.lower())
-    
-    # Special case for zero
-    if text in ['zero', 'nil']:
-        return 0
-    
-    # Dictionary for special number words
-    number_words = {
-        'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
-        'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10
-    }
-    
-    if text in number_words:
-        return number_words[text]
-    
-    raise ValueError("Unable to convert text to number")
 
-def number_to_text(number):
-    """Convert integer to English text"""
+@app.get("/")
+def health_check():
+    return jsonify({"status": "ok", "endpoint": "/county_data"})
+
+
+def validate_payload(payload: Dict[str, str]) -> Tuple[str, str]:
+    zip_code = payload.get("zip")
+    measure_name = payload.get("measure_name")
+
+    if not zip_code or not measure_name:
+        raise ValueError("Both 'zip' and 'measure_name' are required.")
+
+    if not isinstance(zip_code, str) or not zip_code.isdigit() or len(zip_code) != 5:
+        raise ValueError("ZIP code must be a 5-digit string.")
+
+    if measure_name not in ALLOWED_MEASURE_NAMES:
+        raise ValueError("measure_name is not one of the allowed values.")
+
+    return zip_code, measure_name
+
+
+def query_county_data(connection: sqlite3.Connection, zip_code: str, measure: str) -> Iterable[sqlite3.Row]:
+    query = """
+        SELECT
+            chr.state,
+            chr.county,
+            chr.state_code,
+            chr.county_code,
+            chr.year_span,
+            chr.measure_name,
+            chr.measure_id,
+            chr.numerator,
+            chr.denominator,
+            chr.raw_value,
+            chr.confidence_interval_lower_bound,
+            chr.confidence_interval_upper_bound,
+            chr.data_release_year,
+            chr.fipscode
+        FROM county_health_rankings AS chr
+        INNER JOIN zip_county AS z
+            ON chr.county = z.county
+            AND chr.state = z.state_abbreviation
+        WHERE z.zip = ?
+          AND chr.measure_name = ?
+        ORDER BY chr.data_release_year
+    """
+    cursor = connection.execute(query, (zip_code, measure))
+    return cursor.fetchall()
+
+
+@app.post("/county_data")
+def county_data():
+    if not request.is_json:
+        return jsonify({"error": "Request must be JSON."}), 400
+
+    payload = request.get_json(silent=True) or {}
+
+    if payload.get("coffee") == "teapot":
+        return jsonify({"error": "I'm a teapot."}), 418
+
     try:
-        return num2words(number)
-    except:
-        raise ValueError("Unable to convert number to text")
+        zip_code, measure_name = validate_payload(payload)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
-def base64_to_number(b64_str):
-    """Convert base64 to integer"""
     try:
-        # Decode base64 to bytes, then convert bytes to integer
-        decoded_bytes = base64.b64decode(b64_str)
-        return int.from_bytes(decoded_bytes, byteorder='big')
-    except:
-        raise ValueError("Invalid base64 input")
+        connection = get_db_connection()
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 500
 
-def number_to_base64(number):
-    """Convert integer to base64"""
-    try:
-        # Convert integer to bytes, then encode to base64
-        byte_count = (number.bit_length() + 7) // 8
-        number_bytes = number.to_bytes(byte_count, byteorder='big')
-        return base64.b64encode(number_bytes).decode('utf-8')
-    except:
-        raise ValueError("Unable to convert to base64")
+    with connection:
+        rows = query_county_data(connection, zip_code, measure_name)
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+    if not rows:
+        return jsonify({"error": "No data found for the provided zip/measure pair."}), 404
 
-@app.route('/convert', methods=['POST'])
-def convert():
-    try:
-        data = request.get_json()
-        input_value = data['input']
-        input_type = data['inputType']
-        output_type = data['outputType']
-        
-        # Convert input to integer based on input type
-        if input_type == 'text':
-            number = text_to_number(input_value)
-        elif input_type == 'binary':
-            number = int(input_value, 2)
-        elif input_type == 'octal':
-            number = int(input_value, 8)
-        elif input_type == 'decimal':
-            number = int(input_value)
-        elif input_type == 'hexadecimal':
-            number = int(input_value, 16)
-        elif input_type == 'base64':
-            number = base64_to_number(input_value)
-        else:
-            raise ValueError("Invalid input type")
-            
-        # Convert integer to output type
-        if output_type == 'text':
-            result = number_to_text(number)
-        elif output_type == 'binary':
-            result = bin(number)[2:]  # Remove '0b' prefix
-        elif output_type == 'octal':
-            result = oct(number)[2:]  # Remove '0o' prefix
-        elif output_type == 'decimal':
-            result = str(number)
-        elif output_type == 'hexadecimal':
-            result = hex(number)[2:]  # Remove '0x' prefix
-        elif output_type == 'base64':
-            result = number_to_base64(number)
-        else:
-            raise ValueError("Invalid output type")
-            
-        return jsonify({'result': result, 'error': None})
-    except Exception as e:
-        return jsonify({'result': None, 'error': str(e)})
+    result = [dict(row) for row in rows]
+    return jsonify(result)
 
-if __name__ == '__main__':
-    app.run(debug=True)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+

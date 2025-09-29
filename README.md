@@ -1,46 +1,93 @@
-# Numeric Converter - cs1060-hw2-base
+# HW4: County Data API Prototype
 
-A web-based application that converts numbers between different formats including:
-- English text (e.g., "one hundred twenty-three")
-- Binary
-- Octal
-- Decimal
-- Hexadecimal
-- Base64
+This repository contains the code for Homework 4: API Prototyping with Generative AI. It includes:
+
+- `csv_to_sqlite.py`: command-line utility to load arbitrary CSV files into a SQLite database.
+- `api/`: Flask application that exposes the required `county_data` endpoint for serving county-level data from the generated SQLite database.
+- Deployment configuration for Vercel.
 
 ## Setup
 
-1. Install the required dependencies. We recommend following the best Python practice of a virtual environment. (This assumes Python3.)
+1. Create and activate a Python 3 virtual environment (recommended):
+
 ```bash
-python3 -m venv "hw2-env"
-. hw2-env/bin/activate
-pip3 install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-2. Run the application:
+2. Download the required CSV datasets to the project root:
+
+- `zip_county.csv`
+- `county_health_rankings.csv`
+
+3. Generate the SQLite database using the provided script:
+
+```bash
+python csv_to_sqlite.py data.db zip_county.csv
+python csv_to_sqlite.py data.db county_health_rankings.csv
+```
+
+4. Run the Flask development server locally:
+
 ```bash
 python api/index.py
 ```
 
-3. Open your web browser and navigate to `http://localhost:5000`
+The API will be available at `http://localhost:5000`.
 
-## Usage
+## csv_to_sqlite.py
 
-1. Enter your input value in the text box
-2. Select the input format from the dropdown menu
-3. Select the desired output format from the second dropdown menu
-4. Click "Convert" to see the result
+The script accepts a target SQLite database file and an input CSV file. It
 
-## Examples
+- Creates the database if it does not exist.
+- Creates a table named after the CSV file (without extension) if it is missing.
+- Inserts all records from the CSV into the corresponding table.
+- Uses transactions and parameterized inserts to guard against SQL injection.
 
-- Convert decimal to binary: Input "42" with input type "decimal" and output type "binary"
-- Convert text to decimal: Input "forty two" with input type "text" and output type "decimal"
-- Convert hexadecimal to text: Input "2a" with input type "hexadecimal" and output type "text"
+Example usage:
 
-# Deploying
-The application should deploy to [Vercel](https://vercel.com?utm_source=github&utm_medium=readme&utm_campaign=vercel-examples) 
-out of the box.
+```bash
+python csv_to_sqlite.py data.db zip_county.csv
+```
 
-Just Add New... > Project, import the Git repository, and off you go.
-Note that Vercel's Hobby plan means your private repository needs to be
-in your personal GitHub account, not the organizational account.
+## API Usage
+
+- Endpoint: `POST /county_data`
+- Request JSON body must include:
+  - `zip`: 5-digit ZIP code
+  - `measure_name`: one of the required measure strings in the assignment spec
+- Optional JSON key `coffee` with value `teapot` forces an HTTP 418 response.
+
+Example request:
+
+```bash
+curl -s -H 'content-type: application/json' \
+  -d '{"zip":"02138","measure_name":"Adult obesity"}' \
+  http://localhost:5000/county_data
+```
+
+Example response (truncated):
+
+```json
+[
+  {
+    "state": "MA",
+    "county": "Middlesex County",
+    "measure_name": "Adult obesity",
+    "raw_value": "0.23",
+    "data_release_year": "2012"
+    // ...
+  }
+]
+```
+
+The repository includes `link.txt` which points to the deployed endpoint.
+
+## Deployment
+
+The project is configured for Vercel deployment using `vercel.json`. Deployments can run the Flask app using Gunicorn via a single entrypoint configured in the `api` directory.
+
+## Attribution
+
+Where applicable, inline comments in the source code note the origin of generated code snippets or external references.
