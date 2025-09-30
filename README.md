@@ -82,7 +82,7 @@ Example response (truncated):
 ]
 ```
 
-The repository includes `link.txt` which points to the deployed endpoint.
+The repository is deployed at https://william-hy-zhang-hw4.vercel.app/.
 
 ## Deployment
 
